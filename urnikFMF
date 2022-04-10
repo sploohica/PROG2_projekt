@@ -1,0 +1,196 @@
+from cProfile import label
+from turtle import width
+from bs4 import BeautifulSoup as bs
+from itertools import chain
+import requests
+import pprint
+import json
+import re
+import numpy as np
+import matplotlib.pyplot as plt
+
+class Dan:
+    def __init__(self, dan):
+        self.dan = dan
+        self.urnik = {}
+
+    def dodaj_uro(self, predmet="", profesor="", pouk="", ucilnica="", st_h="", zac_h=""):
+        for i in range(st_h):
+            if zac_h + i in self.urnik.keys():
+                predmet_ = ""
+                profesor_ = ""
+                pouk_ = ""
+                ucilnica_ = ""
+                if str(predmet) not in str(self.urnik[zac_h + i][0]):
+                    predmet_ = ' | ' + str(predmet)
+                if str(profesor) not in str(self.urnik[zac_h + i][1]):
+                    profesor_ = ' | ' + str(profesor)
+                if str(pouk) not in str(self.urnik[zac_h + i][2]):
+                    pouk_ = ' | ' + str(pouk)
+                if str(ucilnica) not in str(self.urnik[zac_h + i][3]):
+                    ucilnica_ = ' | ' + str(ucilnica)
+                tmp_urnik = [
+                    str(self.urnik[zac_h + i][0]) + predmet_,
+                    str(self.urnik[zac_h + i][1]) + profesor_,
+                    str(self.urnik[zac_h + i][2]) + pouk_,
+                    str(self.urnik[zac_h + i][3]) + ucilnica_,
+                ]
+                self.urnik[zac_h + i] = tmp_urnik
+            else:
+                self.urnik[zac_h + i] = [predmet, profesor, pouk, ucilnica]
+    
+    def izpisi_dan(self):
+        print(str(self.dan) + ":")
+        for key, values in self.urnik.items():
+            print(str(key) + ": " + str(values))
+
+
+def parse_ura(data):
+    predmet = ""
+    pouk = ""
+    data0 = data.find_all('a')
+    data1 = ((data.text.strip()).replace("\n", "").replace("\t", "")).split()
+    for el in data1:
+        if el == 'P' or el == 'V' or el == 'V1' or el == 'V2' or el == 'V3' or el == 'V4':
+            pouk = el
+            break
+        predmet = predmet + " " + el
+        
+    ucilnica = data0[-1].get("title")
+    profesor = data0[-2].get("title")
+
+    data2 = data.get("style").split(";")
+    data3 = []
+    for el in data2[:-1]:
+        number = re.findall(r'\d+\.\d+', el)
+        data3.append(float(number[0]))
+    
+    if data3[0] < 20:
+        dan = 0
+    elif data3[0] < 40:
+        dan = 1
+    elif data3[0] < 60:
+        dan = 2
+    elif data3[0] < 80:
+        dan = 3
+    else:
+        dan = 4
+    st_h = round(data3[3] / 7.69)
+    zac_h = round(data3[2] / 7.69) + 7
+    
+    return(predmet, pouk, ucilnica, profesor, dan, st_h, zac_h)
+
+
+def get_link(uni, smer, let):
+    url = "https://urnik.fmf.uni-lj.si/letnik/"
+    with open("C:\\Users\\TinkaraRajnar\\Desktop\\Projekt P2\\links.json", "r") as f:
+        data = json.load(f)
+    url_end = data[uni][smer][let]
+    return url + str(url_end) + '/'
+
+
+def json_print():
+    with open("C:\\Users\\TinkaraRajnar\\Desktop\\Projekt P2\\links.json", "r") as f:
+        data = json.load(f)
+        for uni in data:
+            print("--------------------------------------------------------\n")
+            print(uni)
+            for smer in data[uni]:
+                print('\t' + str(smer) + ':  \t' + " | ".join(data[uni][smer].keys()))
+                print("")
+        print("--------------------------------------------------------\n")
+
+
+def get_urnik(uni="MAT", smer="pra", let="1", dan_=0):
+    data = requests.get(get_link(uni, smer, let))
+    soup = bs(data.content, 'lxml')
+    soup = soup.find('div', class_="poravnaj-na-termine")
+
+    all_classes = [
+        'srecanje-absolute-box leftmost', 
+        'srecanje-absolute-box rightmost',
+        'srecanje-absolute-box leftmost rightmost',
+        'srecanje-absolute-box',
+    ]
+
+    class_tab = []
+    for el in all_classes:
+        class_tab.append(soup.find_all('div', el))
+
+    flatten_class = list(chain.from_iterable(class_tab))
+
+    tab_dni = []
+    for dan in ["PON", "TOR", "SRE", "CET", "PET"]:
+        tab_dni.append(Dan(dan))
+
+
+    for el in flatten_class:
+        predmet, pouk, ucilnica, profesor, dan, st_h, zac_h = parse_ura(el)
+        tab_dni[dan].dodaj_uro(predmet, profesor, pouk, ucilnica, st_h, zac_h)
+
+    if dan_ == 0:
+        for el in tab_dni:
+            el.izpisi_dan()
+    else:
+        tab_dni[dan_-1].izpisi_dan()
+    
+    return tab_dni
+
+
+def get_all_data():
+    all_data = {}
+    with open("C:\\Users\\TinkaraRajnar\\Desktop\\Projekt P2\\links.json", "r") as f:
+        data = json.load(f)
+        for studij in data.keys():
+            studijSL = {}
+            for smer in data[studij].keys():
+                smerSL = {}
+                for letnik in data[studij][smer].keys():
+                    smerSL[letnik] = get_urnik(studij, smer, letnik)
+                studijSL[smer] = smerSL
+            all_data[studij] = studijSL
+    return all_data
+
+def fun(all_data):
+
+    rez = {}
+    for studij in all_data.keys():
+        V = 0
+        P = 0
+        for smer in all_data[studij]:
+            for letnik in all_data[studij][smer]:
+                for dnevi in all_data[studij][smer][letnik]:
+                    for ura in dnevi.urnik.keys():
+                        if dnevi.urnik[ura][2] == "V":
+                            V += 1
+                        if dnevi.urnik[ura][2] == "V":
+                            P += 1
+        rez[studij] = [P, V]
+    print(rez)
+                
+def graf(all_data, studij1, smer1, letnik1, studij2, smer2, letnik2):
+    tab1 = []
+    tab2 = []
+    dnevi = ["PON", "TOR", "SRE", "CET", "PET"]
+    for i, el in enumerate(dnevi):
+        tab1.append(len(all_data[studij1][smer1][letnik1][i].urnik.keys()))
+        tab2.append(len(all_data[studij2][smer2][letnik2][i].urnik.keys()))
+    
+    x = np.arange(len(dnevi))
+    width = 0.4
+    fig, ax = plt.subplots()
+    r1 = ax.bar(x - width/2, tab1, width, label=studij1+" "+smer1+" "+letnik1)
+    r2 = ax.bar(x + width/2, tab2, width, label=studij2+" "+smer2+" "+letnik2)
+
+    ax.set_xlabel("Dan")
+    ax.set_ylabel("St. ur")
+    ax.set_xticks(x, dnevi)
+    ax.legend()
+
+    ax.bar_label(r1, padding=3)
+    ax.bar_label(r2, padding=3)
+    
+    plt.show()
+
+all_data = get_all_data()
+graf(all_data,"MAT", "pra", "1", "MAT", "pra", "2")
